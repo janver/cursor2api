@@ -51,6 +51,12 @@ function parseYamlConfig(defaults: AppConfig): { config: AppConfig; raw: Record<
                 proxy: yaml.vision.proxy || undefined,
             };
         }
+        // ★ 自定义系统提示词
+        if (yaml.system_prompt) result.systemPrompt = String(yaml.system_prompt);
+        // ★ Cursor Cookie（用于通过 Vercel 安全验证）
+        if (yaml.cookie) result.cookie = String(yaml.cookie);
+        // ★ Stealth 代理
+        if (yaml.stealth_proxy) result.stealthProxy = String(yaml.stealth_proxy);
         // ★ API 鉴权 token
         if (yaml.auth_tokens) {
             result.authTokens = Array.isArray(yaml.auth_tokens)
@@ -96,6 +102,8 @@ function parseYamlConfig(defaults: AppConfig): { config: AppConfig; raw: Record<
                 exclude: Array.isArray(t.exclude) ? t.exclude.map(String) : undefined,
                 passthrough: t.passthrough === true,
                 disabled: t.disabled === true,
+                adaptiveBudget: t.adaptive_budget === true,    // 默认关闭
+                smartTruncation: t.smart_truncation === true,   // 默认关闭
             };
         }
         // ★ 响应内容清洗开关（默认关闭）
@@ -105,6 +113,10 @@ function parseYamlConfig(defaults: AppConfig): { config: AppConfig; raw: Record<
         // ★ 自定义拒绝检测规则
         if (Array.isArray(yaml.refusal_patterns)) {
             result.refusalPatterns = yaml.refusal_patterns.map(String).filter(Boolean);
+        }
+        // ★ 上下文压力膨胀系数
+        if (typeof yaml.context_pressure === 'number') {
+            result.contextPressure = yaml.context_pressure;
         }
     } catch (e) {
         console.warn('[Config] 读取 config.yaml 失败:', e);
@@ -178,12 +190,32 @@ function applyEnvOverrides(cfg: AppConfig): void {
         if (!cfg.tools) cfg.tools = { schemaMode: 'full', descriptionMaxLength: 0 };
         cfg.tools.disabled = process.env.TOOLS_DISABLED === 'true' || process.env.TOOLS_DISABLED === '1';
     }
+    // 自适应历史预算环境变量覆盖
+    if (process.env.TOOLS_ADAPTIVE_BUDGET !== undefined) {
+        if (!cfg.tools) cfg.tools = { schemaMode: 'full', descriptionMaxLength: 0 };
+        cfg.tools.adaptiveBudget = process.env.TOOLS_ADAPTIVE_BUDGET !== 'false' && process.env.TOOLS_ADAPTIVE_BUDGET !== '0';
+    }
+    // 智能截断环境变量覆盖
+    if (process.env.TOOLS_SMART_TRUNCATION !== undefined) {
+        if (!cfg.tools) cfg.tools = { schemaMode: 'full', descriptionMaxLength: 0 };
+        cfg.tools.smartTruncation = process.env.TOOLS_SMART_TRUNCATION !== 'false' && process.env.TOOLS_SMART_TRUNCATION !== '0';
+    }
 
     // 响应内容清洗环境变量覆盖
     if (process.env.SANITIZE_RESPONSE !== undefined) {
         cfg.sanitizeEnabled = process.env.SANITIZE_RESPONSE === 'true' || process.env.SANITIZE_RESPONSE === '1';
     }
+    // 上下文压力膨胀系数环境变量覆盖
+    if (process.env.CONTEXT_PRESSURE !== undefined) {
+        cfg.contextPressure = parseFloat(process.env.CONTEXT_PRESSURE);
+    }
 
+    // 自定义系统提示词环境变量覆盖
+    if (process.env.SYSTEM_PROMPT) cfg.systemPrompt = process.env.SYSTEM_PROMPT;
+    // Cookie 环境变量覆盖
+    if (process.env.CURSOR_COOKIE) cfg.cookie = process.env.CURSOR_COOKIE;
+    // Stealth 代理环境变量覆盖
+    if (process.env.STEALTH_PROXY) cfg.stealthProxy = process.env.STEALTH_PROXY;
     // 从 base64 FP 环境变量解析指纹
     if (process.env.FP) {
         try {
@@ -208,7 +240,7 @@ function defaultConfig(): AppConfig {
         maxHistoryTokens: 150000,
         sanitizeEnabled: false,  // 默认关闭响应内容清洗
         fingerprint: {
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36',
         },
     };
 }
@@ -253,6 +285,10 @@ function detectChanges(oldCfg: AppConfig, newCfg: AppConfig): string[] {
 
     if (JSON.stringify(oldCfg.refusalPatterns) !== JSON.stringify(newCfg.refusalPatterns)) changes.push(`refusal_patterns: ${oldCfg.refusalPatterns?.length || 0} → ${newCfg.refusalPatterns?.length || 0} rule(s)`);
 
+    // cookie
+    if (oldCfg.cookie !== newCfg.cookie) changes.push(`cookie: ${oldCfg.cookie ? '(set)' : '(none)'} → ${newCfg.cookie ? '(set)' : '(none)'}`);
+    // stealth_proxy
+    if (oldCfg.stealthProxy !== newCfg.stealthProxy) changes.push(`stealth_proxy: ${oldCfg.stealthProxy || '(none)'} → ${newCfg.stealthProxy || '(none)'}`);
     // fingerprint
     if (oldCfg.fingerprint.userAgent !== newCfg.fingerprint.userAgent) changes.push('fingerprint: (changed)');
 
